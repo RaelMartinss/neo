@@ -1,35 +1,39 @@
 import { PrismaClient } from "@prisma/client";
-import { NextApiRequest, NextApiResponse } from "next";
+import { NextRequest, NextResponse } from "next/server";
 
 const prisma = new PrismaClient();
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "GET") {
-    return res.status(405).json({ error: "Método não permitido" });
-  }
+// Exportação nomeada para o método GET
+export async function GET(req: NextRequest, context: { params: Promise<{ type: string }> }) {
+  // Aguardar a resolução de params
+  const params = await context.params;
+  console.log('received request for reports:', params);
+  
+  const { type } = params; // "vendas", "estoque", "financeiro", "clientes"
+  console.log(`Report type: ${type}`);
+  
+  const url = new URL(req.url);
+  const period = url.searchParams.get("period");
 
-  const { type } = req.query; // "vendas", "estoque", "financeiro", "clientes"
-  const { period } = req.query;
-
-  console.log(`FRO --- Received request for type: ${type}, period: ${period}`);
-
+  // Validação de parâmetros
   if (!type || typeof type !== "string") {
-    return res.status(400).json({ error: "Parâmetro 'type' é obrigatório e deve ser uma string" });
+    return NextResponse.json({ error: "Parâmetro 'type' é obrigatório e deve ser uma string" }, { status: 400 });
   }
 
   if (!period || typeof period !== "string") {
-    return res.status(400).json({ error: "Parâmetro 'period' é obrigatório e deve ser uma string" });
+    return NextResponse.json({ error: "Parâmetro 'period' é obrigatório e deve ser uma string" }, { status: 400 });
   }
 
   const validPeriods = ["day", "week", "month", "year", "quarter", "custom"];
   if (!validPeriods.includes(period)) {
-    return res.status(400).json({ error: `Período inválido. Use um dos seguintes: ${validPeriods.join(", ")}` });
+    return NextResponse.json({ error: `Período inválido. Use um dos seguintes: ${validPeriods.join(", ")}` }, { status: 400 });
   }
 
   try {
+    // Definir intervalo de datas com base no período
     let startDate: Date;
     let endDate: Date;
-    const now = new Date(); // 1º de junho de 2025, 19:23 -03
+    const now = new Date(); // 1º de junho de 2025, 20:04 -03
 
     if (period === "day") {
       startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -60,7 +64,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let data;
     switch (type) {
       case "vendas":
-        data = await prisma.sales.findMany({
+        data = await prisma.sale.findMany({
           where: {
             createdAt: {
               gte: startDate,
@@ -92,8 +96,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
         break;
       case "financeiro":
-        // Implementar lógica para somar vendas e despesas por mês
-        const sales = await prisma.sales.findMany({
+        const sales = await prisma.sale.findMany({
           where: {
             createdAt: {
               gte: startDate,
@@ -101,7 +104,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             },
           },
         });
-        const expenses = await prisma.expenses.findMany({
+        const expenses = await prisma.expense.findMany({
           where: {
             createdAt: {
               gte: startDate,
@@ -109,41 +112,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             },
           },
         });
-        interface FinancialReport {
-          receita: number;
-          despesas: number;
-          lucro: number;
-        }
-
-        interface Sale {
-          totalAmount: number;
-        }
-
-        interface Expense {
-          amount: number;
-        }
-
         data = {
-          receita: sales.reduce((sum: number, sale: Sale) => sum + sale.totalAmount, 0),
-          despesas: expenses.reduce((sum: number, expense: Expense) => sum + expense.amount, 0),
-          lucro: sales.reduce((sum: number, sale: Sale) => sum + sale.totalAmount, 0) - expenses.reduce((sum: number, expense: Expense) => sum + expense.amount, 0),
-        } as FinancialReport;
+          receita: sales.reduce((sum, sale) => sum + sale.totalAmount, 0),
+          despesas: expenses.reduce((sum, expense) => sum + expense.amount, 0),
+          lucro: sales.reduce((sum, sale) => sum + sale.totalAmount, 0) - expenses.reduce((sum, expense) => sum + expense.amount, 0),
+        };
         break;
       case "clientes":
-        data = await prisma.customers.findMany({
+        data = await prisma.customer.findMany({
           include: {
             sales: true,
           },
         });
         break;
       default:
-        return res.status(400).json({ error: "Tipo de relatório inválido" });
+        return NextResponse.json({ error: "Tipo de relatório inválido" }, { status: 400 });
     }
-
-    return res.status(200).json(data);
+    console.log('Fetched data-------------------(((((((((()))))))))):', data);
+    return NextResponse.json(data, { status: 200 });
   } catch (error) {
     console.error(`Erro ao buscar ${type}:`, error);
-    return res.status(500).json({ error: `Erro interno ao buscar ${type}` });
+    return NextResponse.json({ error: `Erro interno ao buscar ${type}` }, { status: 500 });
   } finally {
     await prisma.$disconnect();
   }

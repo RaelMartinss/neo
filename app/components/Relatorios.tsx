@@ -70,18 +70,18 @@ export default function Relatorios() {
       if (!selectedPeriod) {
         throw new Error("Período não selecionado (selectedPeriod é null).");
       }
-
+  
       console.log(`PRO ------- Fetching report of type: ${selectedTab} for period: ${selectedPeriod}`);
       const response = await fetch(`/api/reports/${selectedTab}?period=${selectedPeriod}`);
       console.log("Response:", response);
-
+  
       if (!response.ok) {
         throw new Error(`Falha ao carregar dados do relatório: ${response.status} ${response.statusText}`);
       }
-
+  
       const rawData = await response.json();
       console.log("Raw Data:", rawData);
-
+  
       let processedData: ReportData = {
         vendas: [],
         topProducts: [],
@@ -89,10 +89,10 @@ export default function Relatorios() {
         financeiro: [],
         clientes: [],
       };
-
+  
       if (selectedTab === "vendas" && Array.isArray(rawData)) {
         // Agrupar vendas por período (dia, semana, mês, ano)
-        const salesByPeriod: { [key: string]: { vendas: number; lucro: number } } = rawData.reduce((acc, sale: Sale) => {
+        const salesByPeriod = rawData.reduce((acc: { [key: string]: { vendas: number; lucro: number } }, sale: Sale) => {
           const date = new Date(sale.createdAt);
           let periodKey: string;
           if (selectedPeriod === "day") periodKey = date.toLocaleDateString("pt-BR");
@@ -100,34 +100,61 @@ export default function Relatorios() {
           else if (selectedPeriod === "month") periodKey = date.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
           else if (selectedPeriod === "year") periodKey = date.getFullYear().toString();
           else periodKey = "Personalizado";
-
-          acc[periodKey] ??= { vendas: 0, lucro: 0 };
+  
+          if (!acc[periodKey]) {
+            acc[periodKey] = { vendas: 0, lucro: 0 };
+          }
           acc[periodKey].vendas += sale.totalAmount;
-          const lucro = sale.saleItems.reduce((sum, item) => sum + (item.unitPrice - item.product.salePrice) * item.quantity, 0);
+          const lucro = sale.saleItems.reduce((sum, item) => sum + (item.unitPrice - item.product.costPrice) * item.quantity, 0);
           acc[periodKey].lucro += lucro;
           return acc;
         }, {});
-
+  
         processedData.vendas = Object.entries(salesByPeriod).map(([period, data]) => ({
           period,
           vendas: data.vendas,
           lucro: data.lucro,
         }));
+  
+        // Calcular produtos mais vendidos
+        const productSales = rawData.reduce((acc: { [key: string]: { vendas: number; receita: number } }, sale: Sale) => {
+          sale.saleItems.forEach((item) => {
+            const productName = item.product.name;
+            if (!acc[productName]) {
+              acc[productName] = { vendas: 0, receita: 0 };
+            }
+            acc[productName].vendas += item.quantity;
+            acc[productName].receita += item.quantity * item.unitPrice;
+          });
+          return acc;
+        }, {});
+  
+        processedData.topProducts = Object.entries(productSales)
+          .map(([name, data]) => ({
+            name,
+            vendas: data.vendas,
+            receita: data.receita,
+          }))
+          .sort((a, b) => b.vendas - a.vendas);
+      } else if (selectedTab === "estoque" && Array.isArray(rawData)) {
+        // Processar dados de estoque
+        processedData.estoque = rawData.map((product: any) => ({
+          name: product.name,
+          estoque: product.stockQuantity,
+          minimo: product.minStock,
+          status: product.status,
+        }));
       }
-
+  
+      console.log("Processed Data:", processedData);
       setReportData(processedData);
     } catch (error) {
       console.error("Erro ao carregar dados do relatório:", error);
-      if (error instanceof Error) {
-        alert(`Erro ao carregar relatório: ${error.message}. Tente novamente.`);
-      } else {
-        alert("Erro ao carregar relatório: Erro desconhecido. Tente novamente.");
-      }
+      alert(`Erro ao carregar relatório: ${error.message}. Tente novamente.`);
     } finally {
       setIsLoading(false);
     }
   };
-
   const exportToExcel = async () => {
     setIsExporting(true);
     try {
@@ -145,6 +172,7 @@ export default function Relatorios() {
           fileName = `Relatório_Vendas_${selectedPeriod}_${new Date().toISOString().split("T")[0]}.xlsx`;
           break;
         case "estoque":
+          console.log("Exporting estoque data to Excel");
           dataToExport = reportData.estoque.map((item) => ({
             Produto: item.name,
             "Estoque Atual": item.estoque,
@@ -225,6 +253,7 @@ export default function Relatorios() {
             minimo: item.minimo,
             status: item.status,
           }));
+          console.log("Exporting estoque data to PDF rows:", rows);
           break;
         case "financeiro":
           title = `Relatório Financeiro - ${selectedPeriod === "month" ? "Mensal" : "Anual"}`;
@@ -463,75 +492,75 @@ export default function Relatorios() {
                   </div>
                 </TabsContent>
                 <TabsContent value="estoque" className="mt-0">
-                  <div className="space-y-6">
-                    <div className="overflow-x-auto">
-                      <table className="w-full border-collapse">
-                        <thead>
-                          <tr className="bg-gray-100">
-                            <th className="border p-2 text-left">Produto</th>
-                            <th className="border p-2 text-right">Estoque Atual</th>
-                            <th className="border p-2 text-right">Estoque Mínimo</th>
-                            <th className="border p-2 text-center">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {reportData.estoque.map((item, index) => (
-                            <tr key={index} className="hover:bg-gray-50">
-                              <td className="border p-2">{item.name}</td>
-                              <td className="border p-2 text-right">{item.estoque}</td>
-                              <td className="border p-2 text-right">{item.minimo}</td>
-                              <td className="border p-2 text-center">
-                                <span
-                                  className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                    item.status === "NORMAL"
-                                      ? "bg-green-100 text-green-800"
-                                      : item.status === "LOW"
-                                        ? "bg-yellow-100 text-yellow-800"
-                                        : "bg-red-100 text-red-800"
-                                  }`}
-                                >
-                                  {item.status}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <Card>
-                        <CardContent className="p-4">
-                          <div className="text-center">
-                            <p className="text-sm text-gray-600">Produtos em Estoque</p>
-                            <p className="text-2xl font-bold">
-                              {reportData.estoque.filter((item) => item.estoque > 0).length}
-                            </p>
-                          </div>
-                        </CardContent>
-                      </Card>
-                      <Card>
-                        <CardContent className="p-4">
-                          <div className="text-center">
-                            <p className="text-sm text-gray-600">Produtos com Estoque Baixo</p>
-                            <p className="text-2xl font-bold text-yellow-600">
-                              {reportData.estoque.filter((item) => item.status === "LOW").length}
-                            </p>
-                          </div>
-                        </CardContent>
-                      </Card>
-                      <Card>
-                        <CardContent className="p-4">
-                          <div className="text-center">
-                            <p className="text-sm text-gray-600">Produtos Esgotados</p>
-                            <p className="text-2xl font-bold text-red-600">
-                              {reportData.estoque.filter((item) => item.status === "OUT").length}
-                            </p>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </div>
-                  </div>
-                </TabsContent>
+  <div className="space-y-6">
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse">
+        <thead>
+          <tr className="bg-gray-100">
+            <th className="border p-2 text-left">Produto</th>
+            <th className="border p-2 text-right">Estoque Atual</th>
+            <th className="border p-2 text-right">Estoque Mínimo</th>
+            <th className="border p-2 text-center">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {reportData.estoque.map((item, index) => (
+            <tr key={index} className="hover:bg-gray-50">
+              <td className="border p-2">{item.name}</td>
+              <td className="border p-2 text-right">{item.estoque}</td>
+              <td className="border p-2 text-right">{item.minimo}</td>
+              <td className="border p-2 text-center">
+                <span
+                  className={`px-2 py-1 rounded-full text-xs font-medium ${
+                    item.status === "NORMAL"
+                      ? "bg-green-100 text-green-800"
+                      : item.status === "LOW"
+                        ? "bg-yellow-100 text-yellow-800"
+                        : "bg-red-100 text-red-800"
+                  }`}
+                >
+                  {item.status}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <Card>
+        <CardContent className="p-4">
+          <div className="text-center">
+            <p className="text-sm text-gray-600">Produtos em Estoque</p>
+            <p className="text-2xl font-bold">
+              {reportData.estoque.filter((item) => item.estoque > 0).length}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="p-4">
+          <div className="text-center">
+            <p className="text-sm text-gray-600">Produtos com Estoque Baixo</p>
+            <p className="text-2xl font-bold text-yellow-600">
+              {reportData.estoque.filter((item) => item.status === "LOW").length}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="p-4">
+          <div className="text-center">
+            <p className="text-sm text-gray-600">Produtos Esgotados</p>
+            <p className="text-2xl font-bold text-red-600">
+              {reportData.estoque.filter((item) => item.status === "OUT").length}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  </div>
+</TabsContent>
                 <TabsContent value="financeiro" className="mt-0">
                   <div className="space-y-6">
                     <div className="overflow-x-auto">

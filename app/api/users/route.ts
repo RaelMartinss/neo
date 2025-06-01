@@ -1,7 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import { hashPassword, assignDefaultPermissions } from "@/lib/auth"
+import { hashPassword } from "@/lib/auth"
 import type { UserRole } from "@prisma/client"
+import { assignDefaultPermissions } from "@/lib/permissions"
 
 export async function GET(request: NextRequest) {
   try {
