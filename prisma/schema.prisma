@@ -1,0 +1,212 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String           @id @default(cuid())
+  email          String           @unique
+  name           String
+  password       String
+  role           UserRole         @default(SALES)
+  isActive       Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  lastLogin      DateTime?
+  auditLogs      AuditLog[]
+  sales          Sale[]
+  sessions       Session[]
+  stockMovements StockMovement[]
+  permissions    UserPermission[]
+
+  @@map("users")
+}
+
+model Permission {
+  id              String           @id @default(cuid())
+  module          String
+  action          String
+  userPermissions UserPermission[]
+
+  @@unique([module, action])
+  @@map("permissions")
+}
+
+model UserPermission {
+  id           String     @id @default(cuid())
+  userId       String
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permissionId])
+  @@map("user_permissions")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  isActive  Boolean  @default(true)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  module    String
+  details   Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("audit_logs")
+}
+
+model Category {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+
+  @@index([name])
+  @@map("categories")
+}
+
+model Supplier {
+  id        String    @id @default(cuid())
+  name      String
+  cnpj      String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+
+  @@index([cnpj])
+  @@map("suppliers")
+}
+
+model Product {
+  id             String          @id @default(cuid())
+  name           String
+  barcode        String?         @unique
+  categoryId     String
+  supplierId     String
+  stockQuantity  Int
+  minStock       Int
+  maxStock       Int
+  costPrice      Float
+  salePrice      Float
+  isActive       Boolean         @default(true)
+  status         ProductStatus   @default(NORMAL)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  category       Category        @relation(fields: [categoryId], references: [id])
+  supplier       Supplier        @relation(fields: [supplierId], references: [id])
+  saleItems      SaleItem[]
+  stockMovements StockMovement[]
+
+  @@index([isActive])
+  @@index([barcode])
+  @@index([categoryId])
+  @@index([name])
+  @@index([stockQuantity])
+  @@index([supplierId])
+  @@map("products")
+}
+
+model StockMovement {
+  id           String   @id @default(cuid())
+  productId    String
+  userId       String
+  movementType String
+  quantity     Int
+  createdAt    DateTime @default(now())
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([productId])
+  @@index([movementType])
+  @@map("stock_movements")
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  email     String  @unique
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sales     Sale[]
+
+  @@index([name])
+  @@map("customers")
+}
+
+model Sale {
+  id          String     @id @default(cuid())
+  customerId  String?
+  userId      String
+  totalAmount Float
+  createdAt   DateTime   @default(now())
+  saleItems   SaleItem[]
+  customer    Customer?  @relation(fields: [customerId], references: [id])
+  user        User       @relation(fields: [userId], references: [id])
+
+  @@index([createdAt])
+  @@index([customerId])
+  @@index([userId])
+  @@map("sales")
+}
+
+model SaleItem {
+  id         String  @id @default(cuid())
+  saleId     String
+  productId  String
+  quantity   Int
+  unitPrice  Float
+  totalPrice Float
+  product    Product @relation(fields: [productId], references: [id])
+  sale       Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@index([productId])
+  @@map("sale_items")
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  description String
+  amount      Float
+  category    String
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([category])
+  @@map("expenses")
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  CASHIER
+  STOCK_MANAGER
+  SALES
+}
+
+enum ProductStatus {
+  NORMAL
+  LOW
+  OUT
+}
