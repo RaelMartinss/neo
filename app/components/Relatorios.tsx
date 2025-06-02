@@ -144,6 +144,26 @@ export default function Relatorios() {
           minimo: product.minStock,
           status: product.status,
         }));
+      } else if (selectedTab === "clientes" && Array.isArray(rawData)) {
+        // Processar dados de clientes
+        processedData.clientes = rawData.map((customer: any) => {
+          const compras = customer.sales.length;
+          const valorTotal = customer.sales.reduce((sum: number, sale: any) => sum + sale.totalAmount, 0);
+          const ultimaCompra = customer.sales.length > 0
+            ? new Date(
+                customer.sales.reduce((latest: string, sale: any) =>
+                  new Date(sale.createdAt) > new Date(latest) ? sale.createdAt : latest,
+                customer.sales[0].createdAt)
+              ).toLocaleDateString("pt-BR")
+            : "-";
+  
+          return {
+            nome: customer.name,
+            compras,
+            valorTotal,
+            ultimaCompra,
+          };
+        });
       }
   
       console.log("Processed Data:", processedData);
@@ -160,8 +180,9 @@ export default function Relatorios() {
     try {
       let dataToExport: { [key: string]: string | number }[] = [];
       let fileName = "";
-
+      console.log("++++++++++++Exporting vendas data reportData.  ==================", reportData);
       switch (selectedTab) {
+        
         case "vendas":
           dataToExport = reportData.vendas.map((item) => ({
             Período: item.period,
@@ -202,7 +223,7 @@ export default function Relatorios() {
           fileName = `Relatório_Clientes_${new Date().toISOString().split("T")[0]}.xlsx`;
           break;
       }
-
+      console.log("=====----------Data to export:===========----------", dataToExport);
       const worksheet = XLSX.utils.json_to_sheet(dataToExport);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "Relatório");
@@ -492,75 +513,75 @@ export default function Relatorios() {
                   </div>
                 </TabsContent>
                 <TabsContent value="estoque" className="mt-0">
-  <div className="space-y-6">
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse">
-        <thead>
-          <tr className="bg-gray-100">
-            <th className="border p-2 text-left">Produto</th>
-            <th className="border p-2 text-right">Estoque Atual</th>
-            <th className="border p-2 text-right">Estoque Mínimo</th>
-            <th className="border p-2 text-center">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {reportData.estoque.map((item, index) => (
-            <tr key={index} className="hover:bg-gray-50">
-              <td className="border p-2">{item.name}</td>
-              <td className="border p-2 text-right">{item.estoque}</td>
-              <td className="border p-2 text-right">{item.minimo}</td>
-              <td className="border p-2 text-center">
-                <span
-                  className={`px-2 py-1 rounded-full text-xs font-medium ${
-                    item.status === "NORMAL"
-                      ? "bg-green-100 text-green-800"
-                      : item.status === "LOW"
-                        ? "bg-yellow-100 text-yellow-800"
-                        : "bg-red-100 text-red-800"
-                  }`}
-                >
-                  {item.status}
-                </span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <Card>
-        <CardContent className="p-4">
-          <div className="text-center">
-            <p className="text-sm text-gray-600">Produtos em Estoque</p>
-            <p className="text-2xl font-bold">
-              {reportData.estoque.filter((item) => item.estoque > 0).length}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-4">
-          <div className="text-center">
-            <p className="text-sm text-gray-600">Produtos com Estoque Baixo</p>
-            <p className="text-2xl font-bold text-yellow-600">
-              {reportData.estoque.filter((item) => item.status === "LOW").length}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-4">
-          <div className="text-center">
-            <p className="text-sm text-gray-600">Produtos Esgotados</p>
-            <p className="text-2xl font-bold text-red-600">
-              {reportData.estoque.filter((item) => item.status === "OUT").length}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  </div>
-</TabsContent>
+                  <div className="space-y-6">
+                    <div className="overflow-x-auto">
+                      <table className="w-full border-collapse">
+                        <thead>
+                          <tr className="bg-gray-100">
+                            <th className="border p-2 text-left">Produto</th>
+                            <th className="border p-2 text-right">Estoque Atual</th>
+                            <th className="border p-2 text-right">Estoque Mínimo</th>
+                            <th className="border p-2 text-center">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reportData.estoque.map((item, index) => (
+                            <tr key={index} className="hover:bg-gray-50">
+                              <td className="border p-2">{item.name}</td>
+                              <td className="border p-2 text-right">{item.estoque}</td>
+                              <td className="border p-2 text-right">{item.minimo}</td>
+                              <td className="border p-2 text-center">
+                                <span
+                                  className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                    item.status === "NORMAL"
+                                      ? "bg-green-100 text-green-800"
+                                      : item.status === "LOW"
+                                        ? "bg-yellow-100 text-yellow-800"
+                                        : "bg-red-100 text-red-800"
+                                  }`}
+                                >
+                                  {item.status}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <Card>
+                        <CardContent className="p-4">
+                          <div className="text-center">
+                            <p className="text-sm text-gray-600">Produtos em Estoque</p>
+                            <p className="text-2xl font-bold">
+                              {reportData.estoque.filter((item) => item.estoque > 0).length}
+                            </p>
+                          </div>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="p-4">
+                          <div className="text-center">
+                            <p className="text-sm text-gray-600">Produtos com Estoque Baixo</p>
+                            <p className="text-2xl font-bold text-yellow-600">
+                              {reportData.estoque.filter((item) => item.status === "LOW").length}
+                            </p>
+                          </div>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="p-4">
+                          <div className="text-center">
+                            <p className="text-sm text-gray-600">Produtos Esgotados</p>
+                            <p className="text-2xl font-bold text-red-600">
+                              {reportData.estoque.filter((item) => item.status === "OUT").length}
+                            </p>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  </div>
+                </TabsContent>
                 <TabsContent value="financeiro" className="mt-0">
                   <div className="space-y-6">
                     <div className="overflow-x-auto">
@@ -628,17 +649,20 @@ export default function Relatorios() {
                           </tr>
                         </thead>
                         <tbody>
-                          {reportData.clientes.map((cliente, index) => (
-                            <tr key={index} className="hover:bg-gray-50">
-                              <td className="border p-2">{cliente.nome}</td>
-                              <td className="border p-2 text-right">{cliente.compras}</td>
-                              <td className="border p-2 text-right">{cliente.valorTotal.toFixed(2)}</td>
-                              <td className="border p-2 text-right">
-                                {(cliente.valorTotal / cliente.compras).toFixed(2)}
-                              </td>
-                              <td className="border p-2 text-center">{cliente.ultimaCompra}</td>
-                            </tr>
-                          ))}
+                          {reportData.clientes.map((cliente, index) => {
+                            console.log("sssssssssssssssCliente:", reportData.clientes);
+                            return (
+                              <tr key={index} className="hover:bg-gray-50">
+                                <td className="border p-2">{cliente.nome}</td>
+                                <td className="border p-2 text-right">{cliente.compras}</td>
+                                <td className="border p-2 text-right">{cliente.valorTotal.toFixed(2)}</td>
+                                <td className="border p-2 text-right">
+                                  {(cliente.valorTotal / cliente.compras).toFixed(2)}
+                                </td>
+                                <td className="border p-2 text-center">{cliente.ultimaCompra}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>

@@ -118,13 +118,18 @@ export async function GET(req: NextRequest, context: { params: Promise<{ type: s
           lucro: sales.reduce((sum, sale) => sum + sale.totalAmount, 0) - expenses.reduce((sum, expense) => sum + expense.amount, 0),
         };
         break;
-      case "clientes":
-        data = await prisma.customer.findMany({
-          include: {
-            sales: true,
-          },
-        });
-        break;
+        case "clientes":
+          data = await prisma.customer.findMany({
+            include: {
+              sales: {
+                select: {
+                  totalAmount: true,
+                  createdAt: true,
+                },
+              },
+            },
+          });
+          break;
       default:
         return NextResponse.json({ error: "Tipo de relatório inválido" }, { status: 400 });
     }
