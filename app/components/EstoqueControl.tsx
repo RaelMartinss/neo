@@ -5,10 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Search, Plus, Edit, Trash2, Package, AlertTriangle, TrendingDown, TrendingUp } from "lucide-react";
+import { Search, Plus, Edit, Trash2, Package, AlertTriangle, TrendingDown, TrendingUp, Camera, RefreshCw } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/components/ui/use-toast";
+import { Html5QrcodeScanner } from "html5-qrcode";
 
 interface Category {
   id: string;
@@ -44,6 +45,7 @@ export default function EstoqueControl() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isScannerDialogOpen, setIsScannerDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [formData, setFormData] = useState({
     name: "",
@@ -63,6 +65,28 @@ export default function EstoqueControl() {
     fetchSuppliers();
   }, []);
 
+  // Configuração do scanner de código de barras
+  useEffect(() => {
+    if (isScannerDialogOpen) {
+      const scanner = new Html5QrcodeScanner("scanner-container", { fps: 10, qrbox: 250 }, false);
+      scanner.render(
+        (decodedText) => {
+          setFormData({ ...formData, barcode: decodedText });
+          scanner.clear();
+          setIsScannerDialogOpen(false);
+          toast({ title: "Sucesso", description: "Código de barras escaneado com sucesso!" });
+        },
+        (error) => {
+          console.warn("Erro ao escanear:", error);
+        }
+      );
+
+      return () => {
+        scanner.clear();
+      };
+    }
+  }, [isScannerDialogOpen]);
+
   const fetchProducts = async () => {
     try {
       const response = await fetch("/api/products");
@@ -73,6 +97,7 @@ export default function EstoqueControl() {
         toast({ title: "Erro", description: "Falha ao carregar produtos", variant: "destructive" });
       }
     } catch (error) {
+      console.error("Error fetching products:", error);
       toast({ title: "Erro", description: "Falha ao carregar produtos", variant: "destructive" });
     }
   };
@@ -87,6 +112,7 @@ export default function EstoqueControl() {
         toast({ title: "Erro", description: "Falha ao carregar categorias", variant: "destructive" });
       }
     } catch (error) {
+      console.error("Error fetching categories:", error);
       toast({ title: "Erro", description: "Falha ao carregar categorias", variant: "destructive" });
     }
   };
@@ -101,12 +127,54 @@ export default function EstoqueControl() {
         toast({ title: "Erro", description: "Falha ao carregar fornecedores", variant: "destructive" });
       }
     } catch (error) {
+      console.error("Error fetching suppliers:", error);
       toast({ title: "Erro", description: "Falha ao carregar fornecedores", variant: "destructive" });
     }
   };
 
+  const generateBarcode = async () => {
+    let newBarcode;
+    let isUnique = false;
+
+    // Gerar um código único (13 dígitos, formato EAN-13 simplificado)
+    while (!isUnique) {
+      newBarcode = Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
+      const response = await fetch(`/api/products/check-barcode?barcode=${newBarcode}`);
+      if (response.ok) {
+        const { exists } = await response.json();
+        isUnique = !exists;
+      } else {
+        toast({ title: "Erro", description: "Falha ao verificar código de barras", variant: "destructive" });
+        return;
+      }
+    }
+
+    setFormData({ ...formData, barcode: newBarcode || "" });
+    toast({ title: "Sucesso", description: "Código de barras gerado com sucesso!" });
+  };
+
+  const validateBarcode = async (barcode: string) => {
+    if (!barcode || editingProduct?.barcode === barcode) return true;
+    const response = await fetch(`/api/products/check-barcode?barcode=${barcode}`);
+    if (response.ok) {
+      const { exists } = await response.json();
+      if (exists) {
+        toast({ title: "Erro", description: "Código de barras já existe!", variant: "destructive" });
+        return false;
+      }
+      return true;
+    }
+    toast({ title: "Erro", description: "Falha ao verificar código de barras", variant: "destructive" });
+    return false;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validar código de barras
+    const isBarcodeValid = await validateBarcode(formData.barcode);
+    if (!isBarcodeValid) return;
+
     try {
       const url = editingProduct ? `/api/products/${editingProduct.id}` : "/api/products";
       const method = editingProduct ? "PUT" : "POST";
@@ -300,10 +368,31 @@ export default function EstoqueControl() {
                   </div>
                   <div>
                     <Label>Código de Barras</Label>
-                    <Input
-                      value={formData.barcode}
-                      onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        value={formData.barcode}
+                        onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
+                        placeholder="Digite ou escaneie um código de barras"
+                      />
+                      <Dialog open={isScannerDialogOpen} onOpenChange={setIsScannerDialogOpen}>
+                        <DialogTrigger asChild>
+                          <Button type="button" variant="outline">
+                            <Camera className="w-4 h-4 mr-2" />
+                            Escanear
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent>
+                          <DialogHeader>
+                            <DialogTitle>Escanear Código de Barras</DialogTitle>
+                          </DialogHeader>
+                          <div id="scanner-container" className="w-full h-64"></div>
+                        </DialogContent>
+                      </Dialog>
+                      <Button type="button" variant="outline" onClick={generateBarcode}>
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                        Gerar
+                      </Button>
+                    </div>
                   </div>
                   <div>
                     <Label>Categoria</Label>
