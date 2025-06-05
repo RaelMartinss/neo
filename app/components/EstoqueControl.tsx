@@ -57,6 +57,8 @@ export default function EstoqueControl() {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isScannerDialogOpen, setIsScannerDialogOpen] = useState(false);
+  const [cameraPermission, setCameraPermission] = useState<"granted" | "denied" | "prompt" | null>(null);
+  const [scannerInitialized, setScannerInitialized] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [formData, setFormData] = useState({
     name: "",
@@ -70,7 +72,6 @@ export default function EstoqueControl() {
     salePrice: "0",
   });
 
-  // Referência ao elemento do scanner
   const scannerRef = useRef<HTMLDivElement>(null);
   const scannerInstance = useRef<Html5QrcodeScanner | null>(null);
 
@@ -80,29 +81,77 @@ export default function EstoqueControl() {
     fetchSuppliers();
   }, []);
 
-  // Inicializar ou limpar o scanner quando o diálogo for aberto/fechado
+  // Verificar permissão da câmera ao abrir o diálogo do scanner
   useEffect(() => {
-    if (isScannerDialogOpen && scannerRef.current) {
-      scannerInstance.current = new Html5QrcodeScanner("scanner-container", { fps: 10, qrbox: 250 }, false);
-      scannerInstance.current.render(
-        (decodedText) => {
-          setFormData({ ...formData, barcode: decodedText });
-          if (scannerInstance.current) {
-            scannerInstance.current.clear();
-            scannerInstance.current = null;
+    const checkCameraPermission = async () => {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setCameraPermission("denied");
+        return;
+      }
+
+      try {
+        const permissionStatus = await navigator.permissions.query({ name: "camera" as PermissionName });
+        setCameraPermission(permissionStatus.state);
+        permissionStatus.onchange = () => {
+          setCameraPermission(permissionStatus.state);
+        };
+      } catch (error) {
+        console.error("Erro ao verificar permissão da câmera:", error);
+        setCameraPermission("denied");
+      }
+    };
+
+    if (isScannerDialogOpen) {
+      checkCameraPermission();
+    }
+  }, [isScannerDialogOpen]);
+
+  // Inicializar o scanner se a permissão for concedida
+  useEffect(() => {
+    if (isScannerDialogOpen && cameraPermission === "granted" && scannerRef.current) {
+      try {
+        console.log("Inicializando scanner...");
+        scannerInstance.current = new Html5QrcodeScanner("scanner-container", { fps: 10, qrbox: 250 }, false);
+        scannerInstance.current.render(
+          (decodedText) => {
+            console.log("Código de barras escaneado:", decodedText);
+            setFormData({ ...formData, barcode: decodedText });
+            if (scannerInstance.current) {
+              scannerInstance.current.clear();
+              scannerInstance.current = null;
+            }
+            setIsScannerDialogOpen(false);
+            setScannerInitialized(false);
+            toast({ title: "Sucesso", description: "Código de barras escaneado com sucesso!" });
+          },
+          (error) => {
+            console.error("Erro ao escanear:", error);
+            toast({ title: "Erro", description: "Falha ao iniciar o scanner. Tente novamente.", variant: "destructive" });
           }
-          setIsScannerDialogOpen(false);
-          toast({ title: "Sucesso", description: "Código de barras escaneado com sucesso!" });
-        },
-        (error) => {
-          console.warn("Erro ao escanear:", error);
-        }
-      );
+        );
+        setScannerInitialized(true);
+      } catch (error) {
+        console.error("Erro ao inicializar o scanner:", error);
+        setScannerInitialized(false);
+        toast({ title: "Erro", description: "Falha ao inicializar o scanner. Tente novamente.", variant: "destructive" });
+      }
     } else if (!isScannerDialogOpen && scannerInstance.current) {
       scannerInstance.current.clear();
       scannerInstance.current = null;
+      setScannerInitialized(false);
     }
-  }, [isScannerDialogOpen, formData]);
+  }, [isScannerDialogOpen, cameraPermission, formData]);
+
+  const requestCameraPermission = async () => {
+    try {
+      await navigator.mediaDevices.getUserMedia({ video: true });
+      setCameraPermission("granted");
+    } catch (error) {
+      console.error("Erro ao solicitar permissão da câmera:", error);
+      setCameraPermission("denied");
+      toast({ title: "Erro", description: "Permissão da câmera negada. Ative nas configurações do dispositivo.", variant: "destructive" });
+    }
+  };
 
   const fetchProducts = async () => {
     try {
@@ -397,7 +446,27 @@ export default function EstoqueControl() {
                           <DialogHeader>
                             <DialogTitle>Escanear Código de Barras</DialogTitle>
                           </DialogHeader>
-                          <div ref={scannerRef} id="scanner-container" className="w-full h-[50vh] max-h-96"></div>
+                          {cameraPermission === "denied" ? (
+                            <div className="space-y-2">
+                              <p className="text-red-600">
+                                A câmera não está disponível. Verifique se o dispositivo tem uma câmera e se a permissão foi concedida.
+                              </p>
+                              <Button onClick={requestCameraPermission}>Solicitar Permissão</Button>
+                            </div>
+                          ) : cameraPermission === "prompt" ? (
+                            <div className="space-y-2">
+                              <p>Permissão para a câmera não foi concedida. Clique para solicitar.</p>
+                              <Button onClick={requestCameraPermission}>Solicitar Permissão</Button>
+                            </div>
+                          ) : !scannerInitialized ? (
+                            <p>Inicializando o scanner...</p>
+                          ) : (
+                            <div
+                              ref={scannerRef}
+                              id="scanner-container"
+                              className="w-full h-[50vh] max-h-96 border border-gray-300"
+                            ></div>
+                          )}
                         </DialogContent>
                       </Dialog>
                       <Button type="button" variant="outline" onClick={generateBarcode}>
