@@ -58,6 +58,7 @@ export default function EstoqueControl() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isScannerDialogOpen, setIsScannerDialogOpen] = useState(false);
   const [cameraPermission, setCameraPermission] = useState<"granted" | "denied" | "prompt" | null>(null);
+  const [scannerKey, setScannerKey] = useState(0); // Forçar recriação do elemento
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [formData, setFormData] = useState({
     name: "",
@@ -73,6 +74,7 @@ export default function EstoqueControl() {
 
   const scannerRef = useRef<HTMLDivElement>(null);
   const scannerInstance = useRef<Html5QrcodeScanner | null>(null);
+  const videoStream = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     fetchProducts();
@@ -85,13 +87,16 @@ export default function EstoqueControl() {
     const checkCameraPermission = async () => {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setCameraPermission("denied");
+        console.log("Câmera não suportada ou navigator.mediaDevices indisponível.");
         return;
       }
 
       try {
         const permissionStatus = await navigator.permissions.query({ name: "camera" as PermissionName });
+        console.log("Permissão da câmera:", permissionStatus.state);
         setCameraPermission(permissionStatus.state);
         permissionStatus.onchange = () => {
+          console.log("Permissão da câmera alterada para:", permissionStatus.state);
           setCameraPermission(permissionStatus.state);
         };
       } catch (error) {
@@ -105,24 +110,46 @@ export default function EstoqueControl() {
     }
   }, [isScannerDialogOpen]);
 
+  // Liberar recursos da câmera ao fechar o diálogo
+  const stopCameraStream = () => {
+    if (videoStream.current) {
+      console.log("Parando stream de vídeo da câmera...");
+      videoStream.current.getTracks().forEach((track) => track.stop());
+      videoStream.current = null;
+    }
+  };
+
   // Inicializar o scanner se a permissão for concedida
   useEffect(() => {
     if (isScannerDialogOpen && cameraPermission === "granted" && scannerRef.current) {
+      console.log("Inicializando scanner...");
+      // Limpar instância anterior, se existir
+      if (scannerInstance.current) {
+        console.log("Limpando instância anterior do scanner...");
+        scannerInstance.current.clear();
+        scannerInstance.current = null;
+      }
+
+      // Parar qualquer stream de vídeo ativo
+      stopCameraStream();
+
       try {
-        console.log("Inicializando scanner...");
         scannerInstance.current = new Html5QrcodeScanner("scanner-container", {
           qrbox: { width: 250, height: 250 },
           fps: 20,
-        }, false); // Adding the verbose argument as false
+        }, false); // Add verbose argument (e.g., false for non-verbose mode)
+
         scannerInstance.current.render(
           (decodedText) => {
             console.log("Código de barras escaneado:", decodedText);
             setFormData({ ...formData, barcode: decodedText });
+            stopCameraStream();
             if (scannerInstance.current) {
               scannerInstance.current.clear();
               scannerInstance.current = null;
             }
             setIsScannerDialogOpen(false);
+            setScannerKey((prev) => prev + 1); // Forçar recriação do elemento
             toast({ title: "Sucesso", description: "Código de barras escaneado com sucesso!" });
           },
           (error) => {
@@ -130,20 +157,48 @@ export default function EstoqueControl() {
             toast({ title: "Erro", description: "Falha ao iniciar o scanner. Verifique as permissões.", variant: "destructive" });
           }
         );
+
+        // Acessar o stream de vídeo para armazená-lo e liberá-lo depois
+        navigator.mediaDevices
+          .getUserMedia({ video: true })
+          .then((stream) => {
+            videoStream.current = stream;
+            console.log("Stream de vídeo iniciado com sucesso.");
+          })
+          .catch((err) => {
+            console.error("Erro ao acessar a câmera:", err);
+            toast({ title: "Erro", description: "Não foi possível acessar a câmera.", variant: "destructive" });
+          });
       } catch (error) {
         console.error("Erro ao inicializar o scanner:", error);
         toast({ title: "Erro", description: "Falha ao inicializar o scanner. Tente novamente.", variant: "destructive" });
       }
-    } else if (!isScannerDialogOpen && scannerInstance.current) {
-      scannerInstance.current.clear();
-      scannerInstance.current = null;
+    } else if (!isScannerDialogOpen) {
+      console.log("Fechando diálogo: limpando scanner e câmera...");
+      if (scannerInstance.current) {
+        scannerInstance.current.clear();
+        scannerInstance.current = null;
+      }
+      stopCameraStream();
     }
+
+    // Função de cleanup para garantir que o scanner e a câmera sejam liberados
+    return () => {
+      console.log("Executando cleanup do useEffect...");
+      if (scannerInstance.current) {
+        scannerInstance.current.clear();
+        scannerInstance.current = null;
+      }
+      stopCameraStream();
+    };
   }, [isScannerDialogOpen, cameraPermission, formData]);
 
   const requestCameraPermission = async () => {
     try {
-      await navigator.mediaDevices.getUserMedia({ video: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      videoStream.current = stream;
       setCameraPermission("granted");
+      console.log("Permissão da câmera concedida.");
     } catch (error) {
       console.error("Erro ao solicitar permissão da câmera:", error);
       setCameraPermission("denied");
@@ -209,7 +264,7 @@ export default function EstoqueControl() {
       }
     }
 
-    setFormData({ ...formData, barcode: newBarcode });
+    setFormData({ ...formData, barcode: newBarcode || "" });
     toast({ title: "Sucesso", description: "Código de barras gerado com sucesso!" });
   };
 
@@ -457,7 +512,7 @@ export default function EstoqueControl() {
                               <Button onClick={requestCameraPermission}>Solicitar Permissão</Button>
                             </div>
                           ) : (
-                            <div>
+                            <div key={scannerKey}>
                               <div
                                 ref={scannerRef}
                                 id="scanner-container"
