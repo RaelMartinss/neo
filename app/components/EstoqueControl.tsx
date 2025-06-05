@@ -58,7 +58,6 @@ export default function EstoqueControl() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isScannerDialogOpen, setIsScannerDialogOpen] = useState(false);
   const [cameraPermission, setCameraPermission] = useState<"granted" | "denied" | "prompt" | null>(null);
-  const [scannerInitialized, setScannerInitialized] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [formData, setFormData] = useState({
     name: "",
@@ -111,7 +110,10 @@ export default function EstoqueControl() {
     if (isScannerDialogOpen && cameraPermission === "granted" && scannerRef.current) {
       try {
         console.log("Inicializando scanner...");
-        scannerInstance.current = new Html5QrcodeScanner("scanner-container", { fps: 10, qrbox: 250 }, false);
+        scannerInstance.current = new Html5QrcodeScanner("scanner-container", {
+          qrbox: { width: 250, height: 250 },
+          fps: 20,
+        }, false); // Adding the verbose argument as false
         scannerInstance.current.render(
           (decodedText) => {
             console.log("Código de barras escaneado:", decodedText);
@@ -121,24 +123,20 @@ export default function EstoqueControl() {
               scannerInstance.current = null;
             }
             setIsScannerDialogOpen(false);
-            setScannerInitialized(false);
             toast({ title: "Sucesso", description: "Código de barras escaneado com sucesso!" });
           },
           (error) => {
             console.error("Erro ao escanear:", error);
-            toast({ title: "Erro", description: "Falha ao iniciar o scanner. Tente novamente.", variant: "destructive" });
+            toast({ title: "Erro", description: "Falha ao iniciar o scanner. Verifique as permissões.", variant: "destructive" });
           }
         );
-        setScannerInitialized(true);
       } catch (error) {
         console.error("Erro ao inicializar o scanner:", error);
-        setScannerInitialized(false);
         toast({ title: "Erro", description: "Falha ao inicializar o scanner. Tente novamente.", variant: "destructive" });
       }
     } else if (!isScannerDialogOpen && scannerInstance.current) {
       scannerInstance.current.clear();
       scannerInstance.current = null;
-      setScannerInitialized(false);
     }
   }, [isScannerDialogOpen, cameraPermission, formData]);
 
@@ -211,7 +209,7 @@ export default function EstoqueControl() {
       }
     }
 
-    setFormData({ ...formData, barcode: newBarcode || "" });
+    setFormData({ ...formData, barcode: newBarcode });
     toast({ title: "Sucesso", description: "Código de barras gerado com sucesso!" });
   };
 
@@ -458,14 +456,14 @@ export default function EstoqueControl() {
                               <p>Permissão para a câmera não foi concedida. Clique para solicitar.</p>
                               <Button onClick={requestCameraPermission}>Solicitar Permissão</Button>
                             </div>
-                          ) : !scannerInitialized ? (
-                            <p>Inicializando o scanner...</p>
                           ) : (
-                            <div
-                              ref={scannerRef}
-                              id="scanner-container"
-                              className="w-full h-[50vh] max-h-96 border border-gray-300"
-                            ></div>
+                            <div>
+                              <div
+                                ref={scannerRef}
+                                id="scanner-container"
+                                className="w-full h-[50vh] max-h-96 border border-gray-300"
+                              ></div>
+                            </div>
                           )}
                         </DialogContent>
                       </Dialog>
