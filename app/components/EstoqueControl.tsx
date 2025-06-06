@@ -349,7 +349,7 @@ export default function EstoqueControl() {
 
   const handleDelete = async (id: string) => {
     try {
-      const response = await fetch(`/api/products/${id}`, { method: "DELETE" });
+      const response = await fetch(`/api/products/by-id/${id}`, { method: "DELETE" });
       if (response.ok) {
         await fetchProducts();
         toast({ title: "Sucesso", description: "Produto deletado" });
