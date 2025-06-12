@@ -1,676 +1,610 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useEffect, useRef, KeyboardEvent } from "react";
+// import { useAuth } from "../components/AuthWrapper"; // Ajuste o caminho se necessário
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Scan,
-  Plus,
-  Minus,
-  Trash2,
-  CreditCard,
-  DollarSign,
-  Smartphone,
-  ShoppingCart,
-  User,
-  Calendar,
-  Edit,
-  X,
-  Save,
-  Eye,
-  RotateCcw,
-} from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { toast } from "@/components/ui/use-toast";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Html5QrcodeScanner } from "html5-qrcode";
+import { toast } from "@/components/ui/use-toast";
+import { Input } from "@/components/ui/input";
+import { useAuth } from "../contexts/AuthContext";
 
 interface Product {
   id: string;
   name: string;
-  price: number;
   barcode: string;
-  unit: string;
+  categoryId: string;
+  supplierId: string;
+  stockQuantity: number;
+  minStock: number;
+  maxStock: number;
+  costPrice: number;
+  salePrice: number;
+  isActive: boolean;
+  status: "NORMAL" | "LOW" | "OUT";
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface CartItem {
-  id: string;
-  name: string;
   barcode: string;
-  price: number;
+  name: string;
   quantity: number;
+  price: number;
   unit: string;
-  total: number;
-  itemNumber: number;
+  productId?: string;
 }
 
-interface Sale {
+interface User {
   id: string;
-  saleNumber: number;
-  date: string;
-  customer: string;
-  seller: string;
-  items: CartItem[];
-  total: number;
-  observations?: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
+interface FetchUsersResponse {
+  users: User[];
 }
 
 export default function PDV() {
+  const { user, isLoading: authLoading } = useAuth();
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
   const [total, setTotal] = useState(0);
-  const [saleNumber, setSaleNumber] = useState(1);
-  const [saleDate, setSaleDate] = useState("");
-  const [customer, setCustomer] = useState("Cliente Padrão");
-  const [seller, setSeller] = useState("Vendedor 1");
-  const [isScannerDialogOpen, setIsScannerDialogOpen] = useState(false);
-  const [cameraPermission, setCameraPermission] = useState<"granted" | "denied" | "prompt" | null>(null);
-  const [salesHistory, setSalesHistory] = useState<Sale[]>([]);
-  const [isObservationDialogOpen, setIsObservationDialogOpen] = useState(false);
-  const [observation, setObservation] = useState("");
-  const [isViewSaleDialogOpen, setIsViewSaleDialogOpen] = useState(false);
-  const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
-
-  const scannerRef = useRef<HTMLDivElement>(null);
-  const scannerInstance = useRef<Html5QrcodeScanner | null>(null);
-  const videoStream = useRef<MediaStream | null>(null);
-  const scannerKey = useRef(0);
-
-  useEffect(() => {
-    const today = new Date().toLocaleDateString("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
-    setSaleDate(today);
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      switch (e.key) {
-        case "F1":
-          e.preventDefault();
-          startSale();
-          break;
-        case "F2":
-          e.preventDefault();
-          editSale();
-          break;
-        case "F3":
-          e.preventDefault();
-          searchProduct();
-          break;
-        case "F4":
-          e.preventDefault();
-          finalizeSale();
-          break;
-        case "F5":
-          e.preventDefault();
-          removeSelectedProduct();
-          break;
-        case "F6":
-          e.preventDefault();
-          cancelSale();
-          break;
-        case "F8":
-          e.preventDefault();
-          viewSale();
-          break;
-        case "F9":
-          e.preventDefault();
-          changeQuantity();
-          break;
-        case "F10":
-          e.preventDefault();
-          registerProduct();
-          break;
-        case "Escape":
-          e.preventDefault();
-          closeAllDialogs();
-          break;
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [cart, salesHistory]);
+  const [isScanning, setIsScanning] = useState(false);
+  const [barcodeInput, setBarcodeInput] = useState("");
+  const [saleNumber, setSaleNumber] = useState<number | null>(null);
+  const [saleDate, setSaleDate] = useState(new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }));
+  const [client, setClient] = useState("CLIENTE PADRÃO");
+  const [seller, setSeller] = useState("Loja");
+  const [saleInitiated, setSaleInitiated] = useState(false);
+  const [userId, setUserId] = useState<string>("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [showCpfModal, setShowCpfModal] = useState(false);
+  const [cpfUsuario, setCpfUsuario] = useState("");
+  const [tipoPagamento, setTipoPagamento] = useState<string | null>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showNotaFiscalModal, setShowNotaFiscalModal] = useState(false);
+  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastScanTime = useRef<number>(0);
+  const lastBarcode = useRef<string | null>(null);
 
   useEffect(() => {
-    const checkCameraPermission = async () => {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setCameraPermission("denied");
-        return;
-      }
-
+    const fetchUsers = async (): Promise<void> => {
       try {
-        const permissionStatus = await navigator.permissions.query({ name: "camera" as PermissionName });
-        setCameraPermission(permissionStatus.state);
-        permissionStatus.onchange = () => setCameraPermission(permissionStatus.state);
-      } catch (error) {
-        console.error("Erro ao verificar permissão da câmera:", error);
-        setCameraPermission("denied");
-      }
-    };
-
-    if (isScannerDialogOpen) {
-      checkCameraPermission();
-    }
-  }, [isScannerDialogOpen]);
-
-  const stopCameraStream = () => {
-    if (videoStream.current) {
-      videoStream.current.getTracks().forEach((track) => track.stop());
-      videoStream.current = null;
-    }
-  };
-
-  useEffect(() => {
-    if (isScannerDialogOpen && cameraPermission === "granted" && scannerRef.current) {
-      if (scannerInstance.current) {
-        scannerInstance.current.clear();
-        scannerInstance.current = null;
-      }
-      stopCameraStream();
-
-      try {
-        scannerInstance.current = new Html5QrcodeScanner("scanner-container", {
-          qrbox: { width: 250, height: 250 },
-          fps: 20,
+        setIsLoading(true);
+        const response = await fetch("/api/users", {
+          credentials: "include",
         });
 
-        scannerInstance.current.render(
-          (decodedText) => {
-            handleBarcodeScan(decodedText);
-            stopCameraStream();
-            if (scannerInstance.current) {
-              scannerInstance.current.clear();
-              scannerInstance.current = null;
-            }
-            setIsScannerDialogOpen(false);
-            scannerKey.current += 1;
-            toast({ title: "Sucesso", description: "Código de barras escaneado com sucesso!" });
-          },
-          (error) => {
-            console.error("Erro ao escanear:", error);
-            toast({ title: "Erro", description: "Falha ao iniciar o scanner. Verifique as permissões.", variant: "destructive" });
+        if (response.ok) {
+          const data: FetchUsersResponse = await response.json();
+          console.log("Usuários recebidos:", data.users);
+          if (data.users.length > 0) {
+            setUserId(data.users[0].id);
           }
-        );
-
-        navigator.mediaDevices
-          .getUserMedia({ video: true })
-          .then((stream) => {
-            videoStream.current = stream;
-          })
-          .catch((err) => {
-            console.error("Erro ao acessar a câmera:", err);
-            toast({ title: "Erro", description: "Não foi possível acessar a câmera.", variant: "destructive" });
-          });
+        } else {
+          console.error("Erro na resposta da API:", response.status);
+        }
       } catch (error) {
-        console.error("Erro ao inicializar o scanner:", error);
-        toast({ title: "Erro", description: "Falha ao inicializar o scanner. Tente novamente.", variant: "destructive" });
+        console.error("Erro ao buscar usuários:", error);
+      } finally {
+        setIsLoading(false);
       }
-    } else if (!isScannerDialogOpen) {
-      if (scannerInstance.current) {
-        scannerInstance.current.clear();
-        scannerInstance.current = null;
-      }
-      stopCameraStream();
-    }
-
-    return () => {
-      if (scannerInstance.current) {
-        scannerInstance.current.clear();
-        scannerInstance.current = null;
-      }
-      stopCameraStream();
     };
-  }, [isScannerDialogOpen, cameraPermission]);
 
-  const requestCameraPermission = async () => {
+    fetchUsers();
+  }, []);
+
+  useEffect(() => {
+    audioRef.current = new Audio("https://www.soundjay.com/buttons/beep-01a.mp3");
+  }, []);
+
+  const initiateSale = async () => {
+    if (!userId || isLoading || authLoading) {
+      toast({ title: "Erro", description: "Usuário não autenticado ou carregando. Faça login.", variant: "destructive" });
+      return;
+    }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      videoStream.current = stream;
-      setCameraPermission("granted");
+      const response = await fetch("/api/sales/initiate", { method: "POST" });
+      const data = await response.json();
+      if (data.saleNumber) {
+        setSaleNumber(data.saleNumber);
+        setSaleInitiated(true);
+        setShowCpfModal(true);
+        toast({ title: "Sucesso", description: `Venda iniciada com número ${data.saleNumber}` });
+      } else if (data.error) {
+        toast({ title: "Erro", description: data.error, variant: "destructive" });
+      }
     } catch (error) {
-      console.error("Erro ao solicitar permissão da câmera:", error);
-      setCameraPermission("denied");
-      toast({ title: "Erro", description: "Permissão da câmera negada. Ative nas configurações do dispositivo.", variant: "destructive" });
+      console.error("Erro ao iniciar venda:", error);
+      toast({ title: "Erro", description: "Falha ao iniciar venda.", variant: "destructive" });
     }
   };
+
+  useEffect(() => {
+    if (isScanning && !scannerRef.current && saleInitiated) {
+      const calculateQrBoxSize = () => {
+        const width = Math.max(window.innerWidth * 0.5, 300);
+        return { width, height: width };
+      };
+
+      const { width, height } = calculateQrBoxSize();
+      const scanner = new Html5QrcodeScanner("scanner-container", { fps: 10, qrbox: { width, height } }, false);
+      scanner.render(
+        async (decodedText) => {
+          const barcode = decodedText.trim();
+          const currentTime = Date.now();
+          if (lastBarcode.current === barcode && currentTime - lastScanTime.current < 500) return;
+
+          lastBarcode.current = barcode;
+          lastScanTime.current = currentTime;
+
+          const product = await fetchProductByBarcode(barcode);
+          if (product && saleInitiated) {
+            addToCart(product, barcode, "UN");
+            if (audioRef.current) audioRef.current.play().catch((error) => console.warn("Erro ao reproduzir som:", error));
+          } else if (!saleInitiated) {
+            toast({ title: "Aviso", description: "Inicie uma venda antes de adicionar produtos.", variant: "warning" });
+          } else {
+            toast({ title: "Erro", description: `Produto com código ${barcode} não encontrado`, variant: "destructive" });
+          }
+        },
+        (error) => {
+          console.warn("Erro ao escanear:", error);
+          toast({ title: "Erro", description: "Falha ao acessar a câmera. Verifique as permissões.", variant: "destructive" });
+        }
+      );
+      scannerRef.current = scanner;
+
+      const handleResize = () => {
+        if (scannerRef.current) {
+          scannerRef.current.clear();
+          const { width, height } = calculateQrBoxSize();
+          scannerRef.current = new Html5QrcodeScanner("scanner-container", { fps: 10, qrbox: { width, height } }, false);
+          scannerRef.current.render(
+            async (decodedText) => {
+              const barcode = decodedText.trim();
+              const currentTime = Date.now();
+              if (lastBarcode.current === barcode && currentTime - lastScanTime.current < 500) return;
+
+              lastBarcode.current = barcode;
+              lastScanTime.current = currentTime;
+
+              const product = await fetchProductByBarcode(barcode);
+              if (product && saleInitiated) {
+                addToCart(product, barcode, "UN");
+                if (audioRef.current) audioRef.current.play().catch((error) => console.warn("Erro ao reproduzir som:", error));
+              } else if (!saleInitiated) {
+                toast({ title: "Aviso", description: "Inicie uma venda antes de adicionar produtos.", variant: "warning" });
+              } else {
+                toast({ title: "Erro", description: `Produto com código ${barcode} não encontrado`, variant: "destructive" });
+              }
+            },
+            (error) => console.warn("Erro ao escanear:", error)
+          );
+        }
+      };
+      window.addEventListener("resize", handleResize);
+
+      return () => {
+        window.removeEventListener("resize", handleResize);
+        if (scannerRef.current) scannerRef.current.clear();
+      };
+    } else if (!isScanning && scannerRef.current) {
+      scannerRef.current.clear();
+      scannerRef.current = null;
+    }
+  }, [isScanning, saleInitiated]);
 
   const fetchProductByBarcode = async (barcode: string): Promise<Product | null> => {
     try {
-      const response = await fetch(`/api/products/${barcode}`, { method: "GET" });
-      console.log("Resposta da API:", {
-        status: response.status,
-        statusText: response.statusText,
-        url: response.url,
-        body: await response.clone().json(), // Log do corpo da resposta
-      });
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Erro da API:", errorText);
-        toast({ title: "Erro", description: `Produto não encontrado: ${errorText || "Erro desconhecido"}`, variant: "destructive" });
+      const response = await fetch(`/api/products/${barcode}`);
+      if (response.ok) {
+        const data = await response.json();
+        return data;
+      } else if (response.status === 404) {
         return null;
       }
-      const product = await response.json();
-      return product;
+      return null;
     } catch (error) {
       console.error("Erro ao buscar produto:", error);
-      toast({ title: "Erro", description: "Falha ao buscar produto no servidor", variant: "destructive" });
       return null;
     }
   };
 
-  const handleBarcodeScan = async (barcode: string) => {
-    const product = await fetchProductByBarcode(barcode);
-    if (product) {
-      addToCart(product);
-    }
-  };
-
-  const handleManualSearch = async () => {
-    if (!searchTerm) return;
-    const product = await fetchProductByBarcode(searchTerm);
-    if (product) {
-      addToCart(product);
-      setSearchTerm("");
-    } else {
-      toast({ title: "Erro", description: "Produto não encontrado por código ou nome.", variant: "destructive" });
-    }
-  };
-
-  const addToCart = (product: Product) => {
-    const existingItem = cart.find((item) => item.id === product.id);
-
-    if (existingItem) {
-      updateQuantity(existingItem.id, existingItem.quantity + 1);
-    } else {
-      const newItem: CartItem = {
-        id: product.id,
-        name: product.name,
-        barcode: product.barcode,
-        price: product.price,
-        quantity: 1,
-        unit: product.unit,
-        total: product.price,
-        itemNumber: cart.length + 1,
-      };
-      setCart([...cart, newItem]);
-      setTotal(total + product.price);
-    }
-  };
-
-  const updateQuantity = (id: string, newQuantity: number) => {
-    if (newQuantity <= 0) {
-      removeFromCart(id);
+  const addToCart = (product: Product, barcode: string, unit: string) => {
+    if (!saleInitiated) {
+      toast({ title: "Aviso", description: "Inicie uma venda antes de adicionar produtos.", variant: "warning" });
       return;
     }
-
-    const updatedCart = cart.map((item) => {
-      if (item.id === id) {
-        return { ...item, quantity: newQuantity, total: item.price * newQuantity };
+    const productId = product.id;
+    setCart((prevCart) => {
+      const existingItem = prevCart.find((item) => item.barcode === barcode);
+      if (existingItem) {
+        return prevCart.map((item) =>
+          item.barcode === barcode ? { ...item, quantity: item.quantity + 1, productId } : item
+        );
       }
-      return item;
+      return [...prevCart, { barcode, name: product.name, quantity: 1, price: product.salePrice, unit, productId }];
     });
-
-    setCart(updatedCart);
-    setTotal(updatedCart.reduce((sum, item) => sum + item.total, 0));
+    setTotal((prevTotal) => prevTotal + product.salePrice);
   };
 
-  const removeFromCart = (id: string) => {
-    const updatedCart = cart.filter((item) => item.id !== id).map((item, index) => ({
-      ...item,
-      itemNumber: index + 1,
-    }));
-    setCart(updatedCart);
-    setTotal(updatedCart.reduce((sum, item) => sum + item.total, 0));
+  const removeFromCart = (barcode: string, price: number) => {
+    setCart((prevCart) => {
+      const item = prevCart.find((item) => item.barcode === barcode);
+      if (item && item.quantity > 1) {
+        return prevCart.map((item) =>
+          item.barcode === barcode ? { ...item, quantity: item.quantity - 1 } : item
+        );
+      }
+      return prevCart.filter((item) => item.barcode !== barcode);
+    });
+    setTotal((prevTotal) => prevTotal - price);
   };
 
-  const startSale = () => {
-    setCart([]);
-    setTotal(0);
-    setSaleNumber(saleNumber + 1);
-    setObservation("");
-    toast({ title: "Venda Iniciada", description: `Venda ${saleNumber + 1} iniciada.` });
+  const saveSale = async () => {
+    console.log("Tentando salvar venda. Estados:", { saleNumber, cartLength: cart.length, userId, tipoPagamento });
+    if (!saleNumber || cart.length === 0 || !userId) {
+      toast({ title: "Erro", description: "Nenhuma venda iniciada, carrinho vazio ou usuário não autenticado.", variant: "destructive" });
+      return;
+    }
+    if (!tipoPagamento) {
+      setShowPaymentModal(true); // Abre o modal de pagamento
+      return; // Pausa até a seleção
+    }
+
+    try {
+      const response = await fetch("/api/sales/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          saleNumber,
+          userId,
+          totalAmount: total,
+          cpfUsuario: cpfUsuario || null,
+          tipoPagamento,
+          items: cart.map(item => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            price: item.price,
+          })),
+        }),
+      });
+      const data = await response.json();
+      if (data.message) {
+        toast({ title: "Sucesso", description: data.message });
+        setShowNotaFiscalModal(true);
+        setCart([]);
+        setTotal(0);
+        setIsScanning(false);
+        setSaleInitiated(false);
+        setSaleNumber(null);
+        setCpfUsuario("");
+        setTipoPagamento(null);
+      } else if (data.error) {
+        toast({ title: "Erro", description: data.error, variant: "destructive" });
+      }
+    } catch (error) {
+      console.error("Erro ao salvar venda:", error);
+      toast({ title: "Erro", description: "Falha ao salvar venda.", variant: "destructive" });
+    }
   };
 
-  const editSale = () => {
-    toast({ title: "Editar Venda", description: "Funcionalidade de edição de venda (F2)." });
+  const handleScannerToggle = () => {
+    if (!saleInitiated && !isConsulting) {
+      toast({ title: "Aviso", description: "Inicie uma venda antes de usar o scanner.", variant: "warning" });
+      return;
+    }
+    setIsScanning((prev) => !prev);
   };
 
-  const searchProduct = () => {
-    setSearchTerm("");
-    toast({ title: "Consultar Produto", description: "Digite o código de barras ou nome do produto para consultar (F3)." });
+  const [isConsulting, setIsConsulting] = useState(false);
+  const handleConsultProduct = async () => {
+    setIsConsulting(true);
+    if (!barcodeInput.trim()) {
+      toast({ title: "Erro", description: "Digite um código de barras válido.", variant: "destructive" });
+      setIsConsulting(false);
+      return;
+    }
+    const product = await fetchProductByBarcode(barcodeInput);
+    if (product) {
+      toast({ title: "Sucesso", description: `Produto: ${product.name}, Preço: R$${product.salePrice.toFixed(2)}` });
+    } else {
+      toast({ title: "Erro", description: `Produto com código ${barcodeInput} não encontrado`, variant: "destructive" });
+    }
+    setBarcodeInput("");
+    setIsConsulting(false);
   };
 
-  const finalizeSale = () => {
-    if (cart.length === 0) {
-      toast({ title: "Erro", description: "Carrinho vazio! Adicione produtos antes de finalizar.", variant: "destructive" });
+  const handleManualBarcode = () => {
+    if (!saleInitiated && !isConsulting) {
+      toast({ title: "Aviso", description: "Inicie uma venda antes de adicionar produtos.", variant: "warning" });
       return;
     }
 
-    const newSale: Sale = {
-      id: Date.now().toString(),
-      saleNumber,
-      date: saleDate,
-      customer,
-      seller,
-      items: cart,
-      total,
-      observations: observation,
-    };
+    const currentTime = Date.now();
+    if (lastBarcode.current === barcodeInput && currentTime - lastScanTime.current < 500) return;
 
-    setSalesHistory([...salesHistory, newSale]);
-    setCart([]);
-    setTotal(0);
-    setObservation("");
-    setSaleNumber(saleNumber + 1);
-    toast({ title: "Venda Finalizada", description: `Venda ${saleNumber} finalizada com sucesso!` });
-  };
+    lastBarcode.current = barcodeInput;
+    lastScanTime.current = currentTime;
 
-  const removeSelectedProduct = () => {
-    if (cart.length > 0) {
-      const lastItem = cart[cart.length - 1];
-      removeFromCart(lastItem.id);
-      toast({ title: "Produto Removido", description: `Produto ${lastItem.name} removido do carrinho (F5).` });
-    } else {
-      toast({ title: "Erro", description: "Carrinho vazio!", variant: "destructive" });
-    }
-  };
-
-  const cancelSale = () => {
-    setCart([]);
-    setTotal(0);
-    setObservation("");
-    toast({ title: "Venda Cancelada", description: `Venda ${saleNumber} cancelada (F6).` });
-  };
-
-  const viewSale = () => {
-    if (salesHistory.length > 0) {
-      setIsViewSaleDialogOpen(true);
-    } else {
-      toast({ title: "Erro", description: "Nenhuma venda registrada!", variant: "destructive" });
-    }
-  };
-
-  const changeQuantity = () => {
-    if (cart.length > 0) {
-      const lastItem = cart[cart.length - 1];
-      const newQuantity = prompt("Digite a nova quantidade:", lastItem.quantity.toString());
-      if (newQuantity && !isNaN(Number(newQuantity))) {
-        updateQuantity(lastItem.id, Number(newQuantity));
-        toast({ title: "Quantidade Alterada", description: `Quantidade de ${lastItem.name} alterada para ${newQuantity} (F9).` });
+    fetchProductByBarcode(barcodeInput).then((product) => {
+      if (product) {
+        if (saleInitiated && !isConsulting) {
+          addToCart(product, barcodeInput, "UN");
+          if (audioRef.current) audioRef.current.play().catch((error) => console.warn("Erro ao reproduzir som:", error));
+        } else if (isConsulting) {
+          toast({ title: "Sucesso", description: `Produto: ${product.name}, Preço: R$${product.salePrice.toFixed(2)}` });
+        }
+      } else {
+        toast({ title: "Erro", description: `Produto com código ${barcodeInput} não encontrado`, variant: "destructive" });
       }
-    } else {
-      toast({ title: "Erro", description: "Carrinho vazio!", variant: "destructive" });
+      setBarcodeInput("");
+    });
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    switch (e.key) {
+      case "F1":
+        initiateSale();
+        break;
+      case "F2":
+        toast({ title: "Ação", description: "Alterar Venda" });
+        break;
+      case "F3":
+        handleConsultProduct();
+        break;
+      case "F4":
+        saveSale();
+        break;
+      case "F5":
+        toast({ title: "Ação", description: "Excluir Produto" });
+        break;
+      case "F6":
+        setCart([]);
+        setTotal(0);
+        setIsScanning(false);
+        setSaleInitiated(false);
+        setSaleNumber(null);
+        setCpfUsuario("");
+        setTipoPagamento(null);
+        toast({ title: "Ação", description: "Cancelar Venda" });
+        break;
+      case "F8":
+        toast({ title: "Ação", description: "Localizar Venda" });
+        break;
+      case "F9":
+        toast({ title: "Ação", description: "Alterar Quantidade" });
+        break;
+      case "F10":
+        toast({ title: "Ação", description: "Observações" });
+        break;
+      case "Escape":
+        setIsScanning(false);
+        setShowCpfModal(false);
+        setShowPaymentModal(false);
+        setShowNotaFiscalModal(false);
+        toast({ title: "Ação", description: "Fechar" });
+        break;
+      default:
+        break;
     }
   };
 
-  const registerProduct = () => {
-    toast({ title: "Cadastrar Produto", description: "Funcionalidade de cadastro de produto (F10)." });
+  useEffect(() => {
+    const handleKeyDownListener = (e: KeyboardEvent) => handleKeyDown(e);
+    document.addEventListener("keydown", handleKeyDownListener);
+    return () => document.removeEventListener("keydown", handleKeyDownListener);
+  }, []);
+
+  const handleCpfSubmit = (includeCpf: boolean) => {
+    if (includeCpf && !cpfUsuario) {
+      if (!/^\d{11}$/.test(cpfUsuario)) {
+        toast({ title: "Erro", description: "CPF inválido. Digite 11 dígitos.", variant: "destructive" });
+        return;
+      }
+    }
+    setShowCpfModal(false);
   };
 
-  const closeAllDialogs = () => {
-    setIsScannerDialogOpen(false);
-    setIsObservationDialogOpen(false);
-    setIsViewSaleDialogOpen(false);
-    toast({ title: "Ação Cancelada", description: "Diálogos fechados (Esc)." });
+  const handlePaymentSubmit = (paymentType: string) => {
+    console.log("Selecionado tipo de pagamento:", paymentType); // Depuração
+    setTipoPagamento(paymentType);
+    setShowPaymentModal(false);
+  };
+
+  const handleNotaFiscalSubmit = (printNota: boolean) => {
+    if (printNota) {
+      const notaFiscal = {
+        saleNumber,
+        date: saleDate,
+        client,
+        seller,
+        total,
+        items: cart,
+        cpfUsuario,
+        tipoPagamento,
+      };
+      console.log("Nota Fiscal a ser impressa:", notaFiscal);
+      alert(`Nota Fiscal impressa para venda #${saleNumber}`);
+    }
+    setShowNotaFiscalModal(false);
   };
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Ponto de Venda (PDV)</h1>
-        <p className="text-gray-600">Sistema de vendas integrado</p>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Informações da Venda</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div>
-                  <Label>Número da Venda</Label>
-                  <Input value={saleNumber} readOnly />
-                </div>
-                <div>
-                  <Label>Data da Venda</Label>
-                  <Input value={saleDate} readOnly />
-                </div>
-                <div>
-                  <Label>Cliente</Label>
-                  <Input value={customer} onChange={(e) => setCustomer(e.target.value)} />
-                </div>
-                <div>
-                  <Label>Vendedor</Label>
-                  <Input value={seller} onChange={(e) => setSeller(e.target.value)} />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Busca de Produto</CardTitle>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Input
-                    placeholder="Digite código de barras ou nome..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    onKeyPress={(e) => e.key === "Enter" && handleManualSearch()}
-                    className="pl-10"
-                  />
-                </div>
-                <Dialog open={isScannerDialogOpen} onOpenChange={setIsScannerDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button variant="outline">
-                      <Scan className="w-4 h-4 mr-2" />
-                      Scanner
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Escanear Código de Barras</DialogTitle>
-                    </DialogHeader>
-                    {cameraPermission === "denied" ? (
-                      <div className="space-y-2">
-                        <p className="text-red-600">
-                          A câmera não está disponível. Verifique se o dispositivo tem uma câmera e se a permissão foi concedida.
-                        </p>
-                        <Button onClick={requestCameraPermission}>Solicitar Permissão</Button>
-                      </div>
-                    ) : cameraPermission === "prompt" ? (
-                      <div className="space-y-2">
-                        <p>Permissão para a câmera não foi concedida. Clique para solicitar.</p>
-                        <Button onClick={requestCameraPermission}>Solicitar Permissão</Button>
-                      </div>
-                    ) : (
-                      <div key={scannerKey.current}>
-                        <div
-                          ref={scannerRef}
-                          id="scanner-container"
-                          className="w-full h-[50vh] max-h-96 border border-gray-300"
-                        />
-                      </div>
-                    )}
-                  </DialogContent>
-                </Dialog>
-              </div>
-            </CardHeader>
-          </Card>
-        </div>
-
+    <div className="p-6" tabIndex={0} onKeyDown={handleKeyDown}>
+      <div className="flex justify-between items-center mb-4">
         <div>
-          <Card>
-            <CardHeader>
-              <CardTitle>Carrinho de Compras</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="mb-4">
-                <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-  <thead>
-    <tr className="border-b">
-      <th className="text-left p-2">Item</th>
-      <th className="text-left p-2">Descrição</th>
-      <th className="text-left p-2">Código</th>
-      <th className="text-left p-2">Qtde</th>
-      <th className="text-left p-2">Un</th>
-      <th className="text-left p-2">Preço</th>
-      <th className="text-left p-2">Total</th>
-      <th className="text-left p-2">Ações</th>
-    </tr>
-  </thead>
-  <tbody>
-    {cart.length === 0 ? (
-      <tr>
-        <td colSpan={8} className="text-gray-500 text-center py-8">
-          Carrinho vazio
-        </td>
-      </tr>
-    ) : (
-      cart.map((item) => (
-        <tr key={item.id} className="border-b hover:bg-gray-50">
-          <td className="p-2">{item.itemNumber}</td>
-          <td className="p-2">{item.name}</td>
-          <td className="p-2">{item.barcode}</td>
-          <td className="p-2">
-            <div className="flex items-center gap-1">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => updateQuantity(item.id, item.quantity - 1)}
-              >
-                <Minus className="w-3 h-3" />
-              </Button>
-              <span className="w-8 text-center">{item.quantity}</span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => updateQuantity(item.id, item.quantity + 1)}
-              >
-                <Plus className="w-3 h-3" />
-              </Button>
-            </div>
-          </td>
-          <td className="p-2">{item.unit}</td>
-          <td className="p-2">R$ {item.price ? item.price.toFixed(2) : "0.00"}</td>
-          <td className="p-2">R$ {item.total ? item.total.toFixed(2) : "0.00"}</td>
-          <td className="p-2">
-            <Button variant="ghost" size="sm" onClick={() => removeFromCart(item.id)}>
-              <Trash2 className="w-4 h-4" />
-            </Button>
-          </td>
-        </tr>
-      ))
-    )}
-  </tbody>
-</table>
-                </div>
-              </div>
-
-              {cart.length > 0 && (
-                <div className="mt-6 pt-4 border-t">
-                  <div className="flex justify-between items-center mb-4">
-                    <span className="text-lg font-bold">Total Geral:</span>
-                    <span className="text-2xl font-bold text-green-600">R$ {total.toFixed(2)}</span>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Button className="w-full" size="lg" onClick={finalizeSale}>
-                      <DollarSign className="w-4 h-4 mr-2" />
-                      Finalizar (F4)
-                    </Button>
-                    <Button variant="outline" className="w-full" size="lg" onClick={() => setIsObservationDialogOpen(true)}>
-                      <Edit className="w-4 h-4 mr-2" />
-                      Observação
-                    </Button>
-                    <Button variant="outline" className="w-full" size="lg" onClick={cancelSale}>
-                      <X className="w-4 h-4 mr-2" />
-                      Cancelar (F6)
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <span>Nº Venda: {saleNumber ?? "Não iniciada"}</span> |{' '}
+          <span>Data Venda: {saleDate}</span> |{' '}
+          <span>Cliente: {client}</span>
+        </div>
+        <div>
+          <span>Vendedor: {seller}</span>
         </div>
       </div>
-
-      <Dialog open={isObservationDialogOpen} onOpenChange={setIsObservationDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Adicionar Observação</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <Label>Observação</Label>
-            <Input value={observation} onChange={(e) => setObservation(e.target.value)} placeholder="Digite uma observação..." />
-            <Button onClick={() => setIsObservationDialogOpen(false)}>
-              <Save className="w-4 h-4 mr-2" />
-              Salvar
+      <Card>
+        <CardHeader>
+          <CardTitle>TECLADO + MOUSE</CardTitle>
+          <div className="flex gap-2">
+            <Button type="button" onClick={handleScannerToggle} disabled={!saleInitiated && !isConsulting}>
+              {isScanning ? "Parar Scanner" : "Iniciar Scanner"}
+            </Button>
+            <Button onClick={saveSale} disabled={cart.length === 0 || !saleNumber || !tipoPagamento}>
+              Finalizar Venda
             </Button>
           </div>
-        </DialogContent>
-      </Dialog>
+        </CardHeader>
+        <CardContent>
+          {isScanning && (
+            <div className="mb-4">
+              <div id="scanner-container" className="w-full h-96 border border-gray-300 bg-gray-100"></div>
+            </div>
+          )}
+          <div className="flex gap-2 mb-4">
+            <Input
+              type="text"
+              placeholder="Digite o código de barras"
+              value={barcodeInput}
+              onChange={(e) => setBarcodeInput(e.target.value)}
+              onKeyPress={(e) => e.key === "Enter" && handleManualBarcode()}
+              disabled={!saleInitiated && !isConsulting}
+            />
+            <Button onClick={handleManualBarcode} disabled={!saleInitiated && !isConsulting}>
+              Adicionar
+            </Button>
+          </div>
+          <table className="w-full mb-4">
+            <thead>
+              <tr className="bg-gray-200">
+                <th className="p-2 text-left">Itens</th>
+                <th className="p-2 text-left">Código de Barras</th>
+                <th className="p-2 text-left">Descrição</th>
+                <th className="p-2 text-center">Un</th>
+                <th className="p-2 text-center">Qtd</th>
+                <th className="p-2 text-right">Vr. Unit</th>
+                <th className="p-2 text-right">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cart.map((item, index) => (
+                <tr key={item.barcode} className={index % 2 === 0 ? "bg-gray-100" : ""}>
+                  <td className="p-2">{index + 1}</td>
+                  <td className="p-2">{item.barcode}</td>
+                  <td className="p-2">{item.name}</td>
+                  <td className="p-2 text-center">{item.unit}</td>
+                  <td className="p-2 text-center">{item.quantity}</td>
+                  <td className="p-2 text-right">{item.price.toFixed(2)}</td>
+                  <td className="p-2 text-right">{(item.price * item.quantity).toFixed(2)}</td>
+                </tr>
+              ))}
+              <tr className="font-bold">
+                <td colSpan={5} className="p-2 text-right">TOTAL GERAL</td>
+                <td colSpan={2} className="p-2 text-right">{total.toFixed(2)}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="flex justify-between items-center mt-4">
+            <span>Preço Venda: R${total.toFixed(2)}</span>
+            <span>nº Itens: {cart.length}</span>
+          </div>
+        </CardContent>
+      </Card>
+      <div className="flex justify-around mt-4">
+        <Button className="bg-blue-500 text-white" onClick={initiateSale}>F1 Iniciar Venda</Button>
+        <Button className="bg-orange-500 text-white" onClick={() => toast({ title: "Ação", description: "Alterar Venda" })}>F2 Alterar Venda</Button>
+        <Button className="bg-red-500 text-white" onClick={handleConsultProduct}>F3 Consultar Produto</Button>
+        <Button className="bg-gray-300" onClick={saveSale} disabled={cart.length === 0 || !saleNumber || !tipoPagamento}>
+          F4 Finalizar Venda
+        </Button>
+        <Button className="bg-gray-300" onClick={() => toast({ title: "Ação", description: "Excluir Produto" })}>F5 Excluir Produto</Button>
+        <Button className="bg-gray-300" onClick={() => { setCart([]); setTotal(0); setIsScanning(false); setSaleInitiated(false); setSaleNumber(null); setCpfUsuario(""); setTipoPagamento(null); toast({ title: "Ação", description: "Cancelar Venda" }); }}>F6 Cancelar Venda</Button>
+        <Button className="bg-gray-300" onClick={() => toast({ title: "Ação", description: "Localizar Venda" })}>F8 Localizar Venda</Button>
+        <Button className="bg-gray-300" onClick={() => toast({ title: "Ação", description: "Alterar Quantidade" })}>F9 Alterar Quantidade</Button>
+        <Button className="bg-gray-300" onClick={() => toast({ title: "Ação", description: "Observações" })}>F10 Observações</Button>
+        <Button className="bg-red-500 text-white" onClick={() => { setIsScanning(false); setShowCpfModal(false); setShowPaymentModal(false); setShowNotaFiscalModal(false); toast({ title: "Ação", description: "Fechar" }); }}>Esc Fechar</Button>
+      </div>
 
-      <Dialog open={isViewSaleDialogOpen} onOpenChange={setIsViewSaleDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Localizar Venda (F8)</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <Label>Histórico de Vendas</Label>
-            <div className="max-h-96 overflow-y-auto">
-              {salesHistory.map((sale) => (
-                <div
-                  key={sale.id}
-                  className="border rounded-lg p-4 mb-2 hover:bg-gray-50 cursor-pointer"
-                  onClick={() => setSelectedSale(sale)}
+      {/* Modal para CPF */}
+      {showCpfModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg">
+            <h2 className="text-lg font-bold mb-4">Incluir CPF na Nota Fiscal?</h2>
+            <div className="flex gap-4">
+              <button
+                className="bg-green-500 text-white px-4 py-2 rounded"
+                onClick={() => {
+                  setShowCpfModal(false);
+                  setCpfUsuario("");
+                }}
+              >
+                Não
+              </button>
+              <div>
+                <Input
+                  type="text"
+                  placeholder="Digite o CPF (11 dígitos)"
+                  value={cpfUsuario}
+                  onChange={(e) => setCpfUsuario(e.target.value)}
+                  maxLength={11}
+                />
+                <button
+                  className="bg-blue-500 text-white px-4 py-2 rounded mt-2"
+                  onClick={() => handleCpfSubmit(true)}
+                  disabled={!/^\d{11}$/.test(cpfUsuario)}
                 >
-                  <p>Venda #{sale.saleNumber} - {sale.date}</p>
-                  <p>Total: R$ {sale.total.toFixed(2)}</p>
-                </div>
+                  Sim
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para Tipo de Pagamento */}
+      {showPaymentModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg">
+            <h2 className="text-lg font-bold mb-4">Selecione o Tipo de Pagamento</h2>
+            <div className="flex flex-col gap-2">
+              {["PIX", "CREDITO", "DEBITO", "DINHEIRO"].map((type) => (
+                <button
+                  key={type}
+                  className="bg-blue-500 text-white px-4 py-2 rounded"
+                  onClick={() => handlePaymentSubmit(type)}
+                >
+                  {type}
+                </button>
               ))}
             </div>
-            {selectedSale && (
-              <div className="mt-4">
-                <h3 className="font-bold">Detalhes da Venda #{selectedSale.saleNumber}</h3>
-                <p>Data: {selectedSale.date}</p>
-                <p>Cliente: {selectedSale.customer}</p>
-                <p>Vendedor: {selectedSale.seller}</p>
-                <p>Observação: {selectedSale.observations || "Nenhuma"}</p>
-                <div className="mt-2">
-                  <h4 className="font-medium">Itens</h4>
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b">
-                        <th className="text-left p-2">Item</th>
-                        <th className="text-left p-2">Descrição</th>
-                        <th className="text-left p-2">Qtde</th>
-                        <th className="text-left p-2">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedSale.items.map((item) => (
-                        <tr key={item.id}>
-                          <td className="p-2">{item.itemNumber}</td>
-                          <td className="p-2">{item.name}</td>
-                          <td className="p-2">{item.quantity}</td>
-                          <td className="p-2">R$ {item.total.toFixed(2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
           </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+      )}
+
+      {/* Modal para Nota Fiscal */}
+      {showNotaFiscalModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg">
+            <h2 className="text-lg font-bold mb-4">Deseja a Nota Fiscal?</h2>
+            <div className="flex gap-4">
+              <button
+                className="bg-red-500 text-white px-4 py-2 rounded"
+                onClick={() => handleNotaFiscalSubmit(false)}
+              >
+                Não
+              </button>
+              <button
+                className="bg-green-500 text-white px-4 py-2 rounded"
+                onClick={() => handleNotaFiscalSubmit(true)}
+              >
+                Sim
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

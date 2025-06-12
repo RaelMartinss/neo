@@ -1,36 +1,70 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-import { PrismaClient } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { verifyToken } from "@/lib/auth";
 
-const prisma = new PrismaClient();
-
-async function getProductByBarcode(barcode: string) {
-  return await prisma.product.findUnique({
-    where: { barcode },
-  });
-}
-
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const { barcode } = req.query;
-
-  if (req.method !== "GET") {
-    res.setHeader("Allow", ["GET"]);
-    return res.status(405).end(`Método ${req.method} não permitido`);
-  }
-
-  if (typeof barcode !== "string") {
-    return res.status(400).json({ error: "Código de barras inválido" });
-  }
-
+export async function GET(request: NextRequest) {
   try {
-    const product = await getProductByBarcode(barcode);
-    if (product) {
-      return res.status(200).json(product);
-    } else {
-      return res.status(404).json({ error: "Produto não encontrado" });
+    const token =
+      request.headers.get("authorization")?.replace("Bearer ", "") || request.cookies.get("auth-token")?.value;
+
+    if (!token) {
+      return NextResponse.json({ error: "Token não fornecido" }, { status: 401 });
     }
+
+    const payload = verifyToken(token);
+    if (!payload) {
+      return NextResponse.json({ error: "Token inválido" }, { status: 401 });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      include: {
+        permissions: {
+          include: {
+            permission: true,
+          },
+        },
+      },
+    });
+
+    if (!user || !user.isActive) {
+      return NextResponse.json({ error: "Usuário não encontrado ou inativo" }, { status: 404 });
+    }
+
+    // Formatar permissões
+    const permissions = user.permissions.map((up) => ({
+      module: up.permission.module,
+      actions: [up.permission.action],
+    }));
+
+    const groupedPermissions = permissions.reduce(
+      (acc, perm) => {
+        const existing = acc.find((p) => p.module === perm.module);
+        if (existing) {
+          existing.actions.push(...perm.actions);
+        } else {
+          acc.push(perm);
+        }
+        return acc;
+      },
+      [] as Array<{ module: string; actions: string[] }>,
+    );
+
+    const userResponse = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role.toLowerCase(),
+      permissions: groupedPermissions,
+      isActive: user.isActive,
+      createdAt: user.createdAt.toISOString(),
+      lastLogin: user.lastLogin?.toISOString(),
+    };
+
+    return NextResponse.json({ user: userResponse }, { status: 200 });
   } catch (error) {
-    console.error("Erro ao buscar produto:", error);
-    return res.status(500).json({ error: "Erro ao buscar produto" });
+    console.error("Erro ao verificar autenticação:", error);
+    return NextResponse.json({ error: "Erro interno do servidor" }, { status: 500 });
   } finally {
     await prisma.$disconnect();
   }

@@ -26,6 +26,12 @@ async function main() {
 
   const users = [
     {
+      name: "Admin Sistema Empresa",
+      email: "adminEmpresa@empresa.com",
+      password: "FullErpNeo@2",
+      role: UserRole.ADMIN,
+    },
+    {
       name: "Admin Sistema",
       email: "admin@empresa.com",
       password: "admin123",

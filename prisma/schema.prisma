@@ -144,7 +144,7 @@ model StockMovement {
 model Customer {
   id        String   @id @default(cuid())
   name      String
-  email     String  @unique
+  email     String   @unique
   phone     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -154,18 +154,28 @@ model Customer {
   @@map("customers")
 }
 
+model SaleSequence {
+  id     String @id @default(cuid())
+  lastNumber Int @default(0)
+
+  @@map("sale_sequences")
+}
+
 model Sale {
   id          String     @id @default(cuid())
+  saleNumber  Int        @unique // No default value
   customerId  String?
   userId      String
   totalAmount Float
+  cpfUsuario   String?  @db.VarChar(11) // CPF com 11 dígitos
+  tipoPagamento String? // e.g., "PIX", "CREDITO", "DEBITO", "DINHEIRO"
   createdAt   DateTime   @default(now())
   saleItems   SaleItem[]
   customer    Customer?  @relation(fields: [customerId], references: [id])
   user        User       @relation(fields: [userId], references: [id])
 
   @@index([createdAt])
-  @@index([customerId])
+  @@index([saleNumber])
   @@index([userId])
   @@map("sales")
 }
